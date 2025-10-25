@@ -25,7 +25,7 @@
       position: absolute;
       width: 512px;
       height: 512px;
-      image-rendering: pixelated; /* if you want crisp pixels, remove if you want smooth */
+      image-rendering: pixelated;
       background: rgba(0,0,0,0.06);
     }
     .controls {
@@ -72,7 +72,8 @@
   <div class="info">
     <div class="legend">
       Drag scrollbars to pan. Hold Ctrl/Cmd and use mouse wheel to zoom (or use the buttons).<br>
-      Tile size: 512×512. Filenames: "a,b.png" (e.g. -1,2.png). Missing tiles are invisible.
+      Tile size: 512×512. Filenames: "a,b.png" (e.g. -1,2.png).<br>
+      a = west → east (negative a = west). b = north → south (negative b = north). Missing tiles are invisible.
     </div>
   </div>
 
@@ -98,7 +99,7 @@
       const fitBtn = document.getElementById('fit');
 
       // User-editable fallback bounds if no tiles.json is present.
-      // If you know your tile coordinate range, set these to tight bounds to avoid many 404s.
+      // a is horizontal (west->east). b is vertical (north->south).
       let minA = -5, maxA = 5, minB = -5, maxB = 5;
 
       // Scale settings
@@ -172,8 +173,9 @@
 
       function buildGrid(minA_, maxA_, minB_, maxB_, allowedSet) {
         minA = minA_; maxA = maxA_; minB = minB_; maxB = maxB_;
-        const cols = maxB - minB + 1;
-        const rows = maxA - minA + 1;
+        // a axis is horizontal (columns), b axis is vertical (rows)
+        const cols = maxA - minA + 1;
+        const rows = maxB - minB + 1;
         mapWidth = cols * TILE;
         mapHeight = rows * TILE;
 
@@ -196,9 +198,9 @@
             img.width = TILE;
             img.height = TILE;
             img.src = `maptiles/${a},${b}.png`;
-            // Position: left increases with b (east positive), top increases with a (south positive).
-            const left = (b - minB) * TILE;
-            const top = (a - minA) * TILE;
+            // Position: left increases with a (east positive), top increases with b (south positive).
+            const left = (a - minA) * TILE;
+            const top = (b - minB) * TILE;
             img.style.left = left + 'px';
             img.style.top = top + 'px';
             img.alt = `${a},${b}`;
@@ -216,11 +218,11 @@
         // Determine pixel location of tile 0,0 in unscaled coordinates if it's in bounds.
         let centerX = mapWidth / 2;
         let centerY = mapHeight / 2;
-        if (0 >= minB && 0 <= maxB) {
-          centerX = (0 - minB + 0.5) * TILE; // center of tile column 0
-        }
         if (0 >= minA && 0 <= maxA) {
-          centerY = (0 - minA + 0.5) * TILE;
+          centerX = (0 - minA + 0.5) * TILE; // center of tile column 0 (a axis)
+        }
+        if (0 >= minB && 0 <= maxB) {
+          centerY = (0 - minB + 0.5) * TILE; // center of tile row 0 (b axis)
         }
         // scroll so the center point is in the middle of viewport
         const vw = viewport.clientWidth;
