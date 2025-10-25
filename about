@@ -1,0 +1,3 @@
+namepatern = x,y.png
+x -inf..0..+inf north to south
+y -inf..0..+inf west to east
