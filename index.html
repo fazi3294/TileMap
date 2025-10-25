@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TileMap Viewer</title>
+  <style>
+    html,body { height:100%; margin:0; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
+    .viewport {
+      width:100vw;
+      height:100vh;
+      overflow:auto;
+      background: #222;
+      position: relative;
+      touch-action: none;
+    }
+    .map {
+      position: relative;
+      transform-origin: 0 0;
+      will-change: transform;
+      background: repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 32px);
+    }
+    .tile {
+      position: absolute;
+      width: 512px;
+      height: 512px;
+      image-rendering: pixelated; /* if you want crisp pixels, remove if you want
