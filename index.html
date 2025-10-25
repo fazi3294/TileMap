@@ -25,4 +25,306 @@
       position: absolute;
       width: 512px;
       height: 512px;
-      image-rendering: pixelated; /* if you want crisp pixels, remove if you want
+      image-rendering: pixelated; /* if you want crisp pixels, remove if you want smooth */
+      background: rgba(0,0,0,0.06);
+    }
+    .controls {
+      position: fixed;
+      right: 12px;
+      top: 12px;
+      z-index: 9999;
+      display:flex;
+      gap:8px;
+      background: rgba(0,0,0,0.4);
+      padding:8px;
+      border-radius:8px;
+      color: #fff;
+      align-items:center;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    }
+    .controls button {
+      background: rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.06);
+      color:#fff;
+      padding:6px 8px;
+      border-radius:6px;
+      cursor:pointer;
+      font-size:14px;
+    }
+    .controls input[type="number"] {
+      width:64px;
+    }
+    .info {
+      position: fixed;
+      left: 12px;
+      top: 12px;
+      z-index: 9999;
+      background: rgba(0,0,0,0.4);
+      color: #fff;
+      padding:8px;
+      border-radius:8px;
+      font-size:13px;
+    }
+    .legend { opacity:0.8; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="info">
+    <div class="legend">
+      Drag scrollbars to pan. Hold Ctrl/Cmd and use mouse wheel to zoom (or use the buttons).<br>
+      Tile size: 512×512. Filenames: "a,b.png" (e.g. -1,2.png). Missing tiles are invisible.
+    </div>
+  </div>
+
+  <div class="controls" aria-hidden="true">
+    <button id="zoomOut">-</button>
+    <div id="zoomLabel">100%</div>
+    <button id="zoomIn">+</button>
+    <button id="fit">Fit</button>
+  </div>
+
+  <div id="viewport" class="viewport">
+    <div id="map" class="map"></div>
+  </div>
+
+  <script>
+    (function () {
+      const TILE = 512;
+      const viewport = document.getElementById('viewport');
+      const mapEl = document.getElementById('map');
+      const zoomLabel = document.getElementById('zoomLabel');
+      const zoomInBtn = document.getElementById('zoomIn');
+      const zoomOutBtn = document.getElementById('zoomOut');
+      const fitBtn = document.getElementById('fit');
+
+      // User-editable fallback bounds if no tiles.json is present.
+      // If you know your tile coordinate range, set these to tight bounds to avoid many 404s.
+      let minA = -5, maxA = 5, minB = -5, maxB = 5;
+
+      // Scale settings
+      let scale = 1;
+      const MIN_SCALE = 0.1;
+      const MAX_SCALE = 4;
+
+      function setScale(s) {
+        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+        mapEl.style.transform = `scale(${scale})`;
+        zoomLabel.textContent = Math.round(scale * 100) + '%';
+      }
+
+      // Keep track of map size in unscaled pixels.
+      let mapWidth = 0, mapHeight = 0;
+
+      // Try to load a manifest file first (maptiles/tiles.json). If present, it should be:
+      // - an array of filenames: ["0,0.png","1,0.png", ...] OR
+      // - an array of objects: [{a:0,b:0}, {a:-1,b:2}, ...]
+      fetch('maptiles/tiles.json').then(r => {
+        if (!r.ok) throw new Error('no manifest');
+        return r.json();
+      }).then(manifest => {
+        const coords = parseManifest(manifest);
+        if (coords.length === 0) {
+          console.warn('tiles.json found but no tiles listed; falling back to bounds.');
+          buildFromBounds();
+        } else {
+          buildFromCoords(coords);
+        }
+      }).catch(_err => {
+        // Fallback: build from configured bounds
+        buildFromBounds();
+      });
+
+      function parseManifest(manifest) {
+        const out = [];
+        if (!Array.isArray(manifest)) return out;
+        manifest.forEach(item => {
+          if (typeof item === 'string') {
+            // filename like "a,b.png"
+            const m = item.match(/^(-?\d+),(-?\d+)\.png$/);
+            if (m) out.push({a: parseInt(m[1],10), b: parseInt(m[2],10)});
+          } else if (typeof item === 'object' && item !== null && ('a' in item) && ('b' in item)) {
+            out.push({a: parseInt(item.a,10), b: parseInt(item.b,10)});
+          }
+        });
+        return out;
+      }
+
+      function buildFromCoords(coords) {
+        // compute bounds
+        minA = Math.min(...coords.map(c => c.a));
+        maxA = Math.max(...coords.map(c => c.a));
+        minB = Math.min(...coords.map(c => c.b));
+        maxB = Math.max(...coords.map(c => c.b));
+        buildGrid(minA, maxA, minB, maxB, coordsSetFromArray(coords));
+      }
+
+      function coordsSetFromArray(coords) {
+        const s = new Set();
+        coords.forEach(c => s.add(`${c.a},${c.b}`));
+        return s;
+      }
+
+      function buildFromBounds() {
+        // Use minA/maxA/minB/maxB values as currently defined above (user can edit)
+        // If you have MANY tiles, adjust these to match your actual range or add a tiles.json.
+        buildGrid(minA, maxA, minB, maxB, null);
+      }
+
+      function buildGrid(minA_, maxA_, minB_, maxB_, allowedSet) {
+        minA = minA_; maxA = maxA_; minB = minB_; maxB = maxB_;
+        const cols = maxB - minB + 1;
+        const rows = maxA - minA + 1;
+        mapWidth = cols * TILE;
+        mapHeight = rows * TILE;
+
+        // Set the unscaled map element size to the total grid size
+        mapEl.style.width = mapWidth + 'px';
+        mapEl.style.height = mapHeight + 'px';
+
+        // Clear previous
+        mapEl.innerHTML = '';
+
+        for (let a = minA; a <= maxA; a++) {
+          for (let b = minB; b <= maxB; b++) {
+            if (allowedSet && !allowedSet.has(`${a},${b}`)) {
+              // If manifest is present and this tile isn't listed, skip creating the element entirely.
+              continue;
+            }
+
+            const img = document.createElement('img');
+            img.className = 'tile';
+            img.width = TILE;
+            img.height = TILE;
+            img.src = `maptiles/${a},${b}.png`;
+            // Position: left increases with b (east positive), top increases with a (south positive).
+            const left = (b - minB) * TILE;
+            const top = (a - minA) * TILE;
+            img.style.left = left + 'px';
+            img.style.top = top + 'px';
+            img.alt = `${a},${b}`;
+            // If image fails to load, hide it so that empty spots are truly empty
+            img.onerror = () => { img.style.display = 'none'; };
+            mapEl.appendChild(img);
+          }
+        }
+
+        // Center view on 0,0 if inside bounds, otherwise center grid
+        requestAnimationFrame(() => fitToCenter());
+      }
+
+      function fitToCenter() {
+        // Determine pixel location of tile 0,0 in unscaled coordinates if it's in bounds.
+        let centerX = mapWidth / 2;
+        let centerY = mapHeight / 2;
+        if (0 >= minB && 0 <= maxB) {
+          centerX = (0 - minB + 0.5) * TILE; // center of tile column 0
+        }
+        if (0 >= minA && 0 <= maxA) {
+          centerY = (0 - minA + 0.5) * TILE;
+        }
+        // scroll so the center point is in the middle of viewport
+        const vw = viewport.clientWidth;
+        const vh = viewport.clientHeight;
+        viewport.scrollLeft = centerX * scale - vw / 2;
+        viewport.scrollTop = centerY * scale - vh / 2;
+      }
+
+      // Zoom controls and wheel zoom (use Ctrl/Cmd + wheel to zoom)
+      function zoomBy(factor, clientX, clientY) {
+        clientX = clientX === undefined ? viewport.clientWidth / 2 + viewport.getBoundingClientRect().left : clientX;
+        clientY = clientY === undefined ? viewport.clientHeight / 2 + viewport.getBoundingClientRect().top : clientY;
+        const rect = viewport.getBoundingClientRect();
+        const cx = clientX - rect.left;
+        const cy = clientY - rect.top;
+
+        // Map coordinates (unscaled)
+        const mapX = (viewport.scrollLeft + cx) / scale;
+        const mapY = (viewport.scrollTop + cy) / scale;
+
+        const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
+        setScale(newScale);
+
+        viewport.scrollLeft = mapX * newScale - cx;
+        viewport.scrollTop = mapY * newScale - cy;
+      }
+
+      viewport.addEventListener('wheel', (e) => {
+        // If ctrlKey or metaKey (Command) is held, zoom instead of scrolling.
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const delta = e.deltaY;
+          const zoomFactor = Math.exp(-delta * 0.0015); // smooth exponential zoom
+          zoomBy(zoomFactor, e.clientX, e.clientY);
+        }
+      }, { passive: false });
+
+      zoomInBtn.addEventListener('click', () => zoomBy(1.2));
+      zoomOutBtn.addEventListener('click', () => zoomBy(1 / 1.2));
+      fitBtn.addEventListener('click', () => {
+        // Fit: reset scale to 1 and center
+        setScale(1);
+        fitToCenter();
+      });
+
+      // Initialize scale label
+      setScale(1);
+
+      // Allow dragging with middle-mouse or space+drag for convenience
+      let isDragging = false;
+      let lastX = 0, lastY = 0;
+      viewport.addEventListener('mousedown', (e) => {
+        if (e.button === 1 || e.button === 0 && e.shiftKey) { // middle button or shift+left
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          viewport.style.cursor = 'grabbing';
+          e.preventDefault();
+        }
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        viewport.scrollLeft -= dx;
+        viewport.scrollTop -= dy;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      window.addEventListener('mouseup', (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        viewport.style.cursor = '';
+      });
+
+      // Keyboard shortcuts
+      window.addEventListener('keydown', (e) => {
+        if (e.key === '+') { zoomBy(1.2); }
+        if (e.key === '-') { zoomBy(1 / 1.2); }
+        if (e.key === '0') { setScale(1); }
+      });
+
+      // Expose a helper on window for quick editing from console:
+      window.TileMap = {
+        setBounds: function(minAP, maxAP, minBP, maxBP) {
+          minA = minAP; maxA = maxAP; minB = minBP; maxB = maxBP;
+          buildFromBounds();
+        },
+        reload: function() {
+          // re-run manifest check and reload
+          fetch('maptiles/tiles.json').then(r => {
+            if (!r.ok) throw new Error('no manifest');
+            return r.json();
+          }).then(manifest => {
+            const coords = parseManifest(manifest);
+            if (coords.length === 0) {
+              buildFromBounds();
+            } else {
+              buildFromCoords(coords);
+            }
+          }).catch(_ => buildFromBounds());
+        }
+      };
+    })();
+  </script>
+</body>
+</html>
